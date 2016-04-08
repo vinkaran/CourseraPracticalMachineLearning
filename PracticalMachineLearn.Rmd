@@ -1,0 +1,219 @@
+---
+title: "Practical Machine Learning Assigment"
+author: "VV"
+date: "April 8, 2016"
+output: html_document
+---
+
+##Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. 
+
+One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. 
+
+More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+We will use data to find out the way the participants did the workouts. The class variable classifies the outcome in A,B,C,D,E CATEGORIES. 
+
+This write up will give us info on how we built this project, how we cross validate, error calc, and what we did about it. And finally how we predict 20 diffrent test cases.
+
+Loading Libraries
+```{r}
+library(ggplot2)
+library(lattice)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(e1071)
+```
+Loading data
+```{r}
+setwd("C:/Users/VVENKA01/Personal/Data Science Course/08 Practical Machine Learning")  # or any directory of your choice
+training <- read.csv("pml-training.csv", na.strings = c("NA", "#DIV/0!", ""))
+testing  <- read.csv("pml-testing.csv",  na.strings = c("NA", "#DIV/0!", ""))
+```
+Lets have a qucick look at teh data and specifically the classe
+
+```{r}
+str(training, list.len=15)
+```
+
+```{r}
+table(training$classe)
+```
+Lets check data with user names
+
+```{r}
+prop.table(table(training$user_name, training$classe), 1)
+```
+
+```{r}
+prop.table(table(training$classe))
+```
+
+Lets do some data clean up by removing the first 6 columns
+
+```{r}
+training <- training[, 7:160]
+testing  <- testing[, 7:160]
+```
+As well lets remove all column swith NA
+
+```{r}
+is_data  <- apply(!is.na(training), 2, sum) > 19621  # which is the number of observations
+training <- training[, is_data]
+testing  <- testing[, is_data]
+```
+
+Lets split the training data in 70/30 ratio, 70% for sub sampling and 30% for testing
+
+```{r}
+set.seed(3141592)
+inTrain <- createDataPartition(y=training$classe, p=0.70, list=FALSE)
+train1  <- training[inTrain,]
+train2  <- training[-inTrain,]
+dim(train1)
+dim(train2)
+```
+as we can see train1 got 11776 observation which is of 60% of the training data set and train2 got 7846 observation which is of 40% of training data set and train2 will be used only for testing our logic. As per our partition we can see we now have 53 covariates in our 60% data
+
+## Manupulation of Data using regression tree
+```{r}
+library(randomForest)
+set.seed(3141592)
+fitModel <- randomForest(classe~., data=train1, importance=TRUE, ntree=100)
+varImpPlot(fitModel)
+```
+As we can see the gini and accuracy graphs shows a curve where is top 10 varibales got more impact than the rest of the varibales, So lets linlt oor model with top 10 varibles rather using all 53 variables
+
+##our top 10 varibles are 
+yaw_belt
+roll_belt
+num_window
+pitch_belt
+magnet_dumbbell_y
+magnet_dumbbell_z
+pitch_forearm
+accel_dumbbell_y
+roll_arm
+roll_forearm
+
+And lets find the correlations which is above 75% between these 10 variables
+
+```{r}
+correl = cor(train1[,c("yaw_belt","roll_belt","num_window","pitch_belt","magnet_dumbbell_z","magnet_dumbbell_y","pitch_forearm","accel_dumbbell_y","roll_arm","roll_forearm")])
+diag(correl) <- 0
+which(abs(correl)>0.75, arr.ind=TRUE)
+```
+Based on our output we can see 2 varibales got high correlation rate which is roll_belt and yaw_belt
+
+```{r}
+cor(train1$roll_belt, train1$yaw_belt)
+```
+
+As we can see the correlation is 81% between these 2 variables, in that case lets remove one of them in order to make our model more accurate
+
+```{r}
+correl = cor(train1[,c("roll_belt","num_window","pitch_belt","magnet_dumbbell_z","magnet_dumbbell_y","pitch_forearm","accel_dumbbell_y","roll_arm","roll_forearm")])
+diag(correl) <- 0
+which(abs(correl)>0.75, arr.ind=TRUE)
+max(correl)
+```
+As we rerun the correlation script with 9 varibales we can see there is no variable correlated more than 75% and max correlation is 50% which makes our model more reliable
+
+Lets try to find if there any interesting relation ship between roll_belt and other variables as follows
+
+```{r}
+qplot(roll_belt, num_window, colour=classe, data=train1)
+qplot(roll_belt, pitch_belt, colour=classe, data=train1)
+qplot(roll_belt, magnet_dumbbell_z, colour=classe, data=train1)
+qplot(roll_belt, magnet_dumbbell_y, colour=classe, data=train1)
+qplot(roll_belt, pitch_forearm, colour=classe, data=train1)
+qplot(roll_belt, accel_dumbbell_y, colour=classe, data=train1)
+qplot(roll_belt, roll_arm, colour=classe, data=train1)
+qplot(roll_belt, roll_forearm, colour=classe, data=train1)
+```
+The graph suggets that we do have a an interesting relatioship between roll_belt and magnet_dumbbell_y and thus allow us to categorize using the roll_belt type
+
+to confirm that lets try to do a tree classifications to justify our idea
+
+```{r}
+
+TreeModel <- rpart(classe~., data=train1, method="class")
+prp(TreeModel)
+
+```
+As we can see the random forest output is satisfactory
+
+
+##Model Creation
+
+1. we are using 9 variables out of 53 
+2. they are "roll_belt","num_window","pitch_belt","magnet_dumbbell_z","magnet_dumbbell_y","pitch_forearm","accel_dumbbell_y","roll_arm","roll_forearm"
+3. the correlation of these variable are 50%
+4. we are going to use 2 fold validation control
+
+```{r}
+set.seed(3141592)
+treeModel <- train(classe~roll_belt+num_window+pitch_belt+magnet_dumbbell_y+magnet_dumbbell_z+pitch_forearm+accel_dumbbell_y+roll_arm+roll_forearm,
+                  data=train1,
+                  method="rf",
+                  trControl=trainControl(method="cv",number=2),
+                  prox=TRUE,
+                  verbose=TRUE,
+                  allowParallel=TRUE)
+
+```
+
+the above set of code are high intense code and takes upto 5 min to run, So we are saving this model in a Rds file and allocate it to a varible for later use
+
+```{r}
+saveRDS(treeModel,"treeModel.Rds")
+treeModel <- readRDS("treeModel.Rds")
+```
+
+#now its time to see how accurate this model is
+
+```{r}
+treepredictions <- predict(treeModel, newdata=train2)
+confusionMat <- confusionMatrix(treepredictions, train2$classe)
+confusionMat
+```
+yes and its true, its 99% accuracy
+
+Lets find the out of sample error rate
+
+```{r}
+outofsample = function(values, predicted) {
+  sum(predicted != values) / length(values)
+}
+ooserrorrate = outofsample(train2$classe, treepredictions)
+ooserrorrate
+```
+as we can see the OSS is mere .084% and its time for final prediction
+```{r}
+predictions <- predict(treeModel, newdata=testing)
+testing$classe <- predictions
+
+```
+Lets store our results in a csv
+
+```{r}
+submit <- data.frame(problem_id = testing$problem_id, classe = predictions)
+write.csv(submit, file = "coursera-machine-learning.csv", row.names = FALSE)
+```
+
+```{r}
+answers = testing$classe
+write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_",i,".txt")
+    write.table(x[i], file=filename, quote=FALSE, row.names=FALSE, col.names=FALSE)
+  }
+}
+write_files(answers)
+```
+## Our conclusion
+
+As we know we used top 9 variables to build this model and we saw the accuracy is 99.9% and the out-of-sample-error is mere.08% which concludes our model is very effective, to say too accurate to be true. 
